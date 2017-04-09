@@ -1,2 +1,11 @@
+# Dependencies
 node_modules/
 bower_components/
+
+#logs
+logs
+*.log
+
+#Compiled files
+public/css/*
+public/js/*
