@@ -13,7 +13,9 @@ const Router = require('react-router')
 const routes = require('./app/routes')
 
 const app = express()
-
+const server = require('http').createServer(app)
+const io = require('socket.io')(server)
+let onlineUsers = 0
 
 app.set('port', process.env.PORT || 3000)
 app.use(logger('dev'))
@@ -37,6 +39,17 @@ app.use((req, res) =>
   })
 )
 
-app.listen(app.get('port'), () =>
+io.sockets.on('connection', () => {
+  onlineUsers++
+  io.sockets.emit('onlineUsers', { onlineUsers })
+
+  io.sockets.on('disconnect', () => {
+    onlineUsers--
+    io.sockets.emit('onlineUsers', { onlineUsers })
+  })
+})
+
+
+server.listen(app.get('port'), () =>
   console.log('Express server listening on port ' + app.get('port'))
 )
