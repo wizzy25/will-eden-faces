@@ -21,12 +21,12 @@ class Navbar extends React.Component {
     })
 
     $(document).ajaxStart(() => {
-      NavbarActions.updateAjaxAnimations('fadeIn')
+      NavbarActions.updateAjaxAnimation('fadeIn')
     })
 
     $(document).ajaxComplete(() => {
       setTimeout(() => {
-        NavbarActions.updateAjaxAnimations('fadeOut')
+        NavbarActions.updateAjaxAnimation('fadeOut')
       }, 1000)
     })
   }
