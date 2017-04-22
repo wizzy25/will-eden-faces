@@ -99,7 +99,6 @@ app.use(express.static(path.join(__dirname, 'public')))
             })
           }
           catch(e) {
-            console.log('ffooooo ', e, JSON.stringify(parsedXml, null ,1))
             res.status(404).send({ message: `${characterName} is not a registered citizen of New Eden.` });
           }
         })
