@@ -2,20 +2,29 @@
 
 require('babel-register')
 
-const express = require('express')
+const http = require('http')
 const path = require('path')
 const logger = require('morgan')
+const express = require('express')
 const bodyParser = require('body-parser')
+const mongoose = require('mongoose')
 const swig = require('swig')
 const React = require('react')
 const ReactDOM = require('react-dom/server')
 const Router = require('react-router')
 const routes = require('./app/routes')
+const Character = require('./models/Character')
+const config = require('./config')
 
 const app = express()
-const server = require('http').createServer(app)
+const server = http.createServer(app)
 const io = require('socket.io')(server)
 let onlineUsers = 0
+
+mongoose.connect(config.database)
+mongoose.connection.on('error', () => {
+  console.info('Error: Could not connect to MongoDB. Did you forget to run `mongod`?')
+})
 
 app.set('port', process.env.PORT || 3000)
 app.use(logger('dev'))

@@ -9,3 +9,6 @@ logs
 #Compiled files
 public/css/*
 public/js/*
+
+#Configuration files
+config.js
