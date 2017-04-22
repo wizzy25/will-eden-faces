@@ -12,6 +12,11 @@ const swig = require('swig')
 const React = require('react')
 const ReactDOM = require('react-dom/server')
 const Router = require('react-router')
+
+const async = require('async')
+const request = require('request')
+const xml2js = require('xml2js')
+
 const routes = require('./app/routes')
 const Character = require('./models/Character')
 const config = require('./config')
@@ -31,6 +36,77 @@ app.use(logger('dev'))
 app.use(bodyParser.json())
 app.use(bodyParser.urlencoded({ extended: false }))
 app.use(express.static(path.join(__dirname, 'public')))
+
+/**
+ * POST /api/characters
+ * Adds new character to the database.
+ */
+ app.post('/api/characters', (req, res, next) => {
+  const gender = req.body.gender
+  const characterName = req.body.name
+  const characterIdLookupUrl = `https://api.eveonline.com/eve/CharacterID.xml.aspx?names=${characterName}`
+
+  const parser = new xml2js.Parser()
+
+  async.waterfall([
+    (cb) => {
+      request.get(characterIdLookupUrl, (err, request, xml) => {
+        if (err) return next(err)
+        parser.parseString(xml, (err, parsedXml) => {
+          if (err) return next(err)
+          try {
+            const characterId = parsedXml.eveapi.result[0].rowset[0].row[0].$.characterID
+
+            Character.findOne({ characterId }, (err, character) => {
+              if (err) return next(err)
+
+              if(character)
+                return res.status(409).send({ message: `${character.name} is already in the database` })
+
+              cb(err, characterId)
+            })
+          }
+          catch(e) {
+            return res.status(400).send({ message: 'XML parse error' })
+          }
+        })
+      })
+    },
+    (characterId) => {
+      const characterInfoUrl = `https://api.eveonline.com/eve/CharacterInfo.xml.aspx?characterID=${characterId}`
+
+      request.get({ url: characterInfoUrl }, (err, request, xml) => {
+        if (err) return next(err)
+        parser.parseString(xml, (err, parsedXml) => {
+          if (err) return next(err)
+          try {
+            const name = parsedXml.eveapi.result[0].characterName[0]
+            const race = parsedXml.eveapi.result[0].race[0]
+            const bloodline = parsedXml.eveapi.result[0].bloodline[0]
+
+            const character = new Character({
+              characterId,
+              name,
+              race,
+              bloodline,
+              gender,
+              random: [Math.random(), 0]
+            })
+
+            character.save((err) => {
+              if (err) return next(err)
+              res.send({ message: `${characterName} has been added successfully` })
+            })
+          }
+          catch(e) {
+            console.log('ffooooo ', e, JSON.stringify(parsedXml, null ,1))
+            res.status(404).send({ message: `${characterName} is not a registered citizen of New Eden.` });
+          }
+        })
+      })
+    }
+    ])
+})
 
 app.use((req, res) =>
   Router.match({ routes: routes.default, location: req.url }, (err, redirLocation, renderProps) => {
