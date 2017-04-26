@@ -4,6 +4,7 @@ import React from 'react'
 import { Link } from 'react-router'
 import HomeActions from '../actions/HomeActions'
 import HomeStore from '../stores/HomeStore'
+import { first, without, findWhere } from 'underscore'
 
 class Home extends React.Component {
   constructor(props) {

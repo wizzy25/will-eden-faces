@@ -12,6 +12,7 @@ const swig = require('swig')
 const React = require('react')
 const ReactDOM = require('react-dom/server')
 const Router = require('react-router')
+const _ = require('underscore')
 
 const async = require('async')
 const request = require('request')
@@ -105,6 +106,334 @@ app.use(express.static(path.join(__dirname, 'public')))
       })
     }
     ])
+})
+
+/**
+ * PUT /api/characters
+ * Update winning and losing count for both characters.
+ */
+app.put('/api/characters', (req, res, next) => {
+  const winner = req.body.winner
+  const loser = req.body.loser
+
+  if (!winner || !loser)
+    return res.status(400).send({ message: 'Voting requires two characters, but you know this already' })
+  if (winner === loser)
+    return res.status(400).send({ message: 'Cannot vote for and against the same person you dimwit' })
+
+  async.parallel([
+    (cb) => {
+      Character.findOne({ characterId: 'winner' }, (err, winner) => {
+        cb(err, winner)
+      })
+    },
+    (cb) => {
+      Character.findOne({ characterId: 'loser' }, (err, loser) => {
+        cb(err, loser)
+      })
+    }
+  ], (err, results) => {
+    if (err)
+      return next(err)
+
+    const [winner, loser] = results
+
+    if (!winner || !loser)
+      return res.status(404).send({ message: 'One of the characters is now extinct' })
+    if (winner.voted || loser.voted)
+      return res.status(200).end()
+
+    async.parallel([
+      (cb) => {
+        winner.wins++
+        winner.voted = true
+        winner.random = [Math.random(), 0]
+        winner.save((err) => cb(err))
+      },
+      (cb) => {
+        loser.losses++
+        loser.voted = true
+        loser.random = [Math.random(), 0]
+        loser.save((err) => cb(err))
+      }
+    ], (err) => {
+      if (err)
+        return next(err)
+      res.status(200).end()
+    })
+  })
+})
+
+/**
+ * GET /api/characters
+ * Returns 2 random characters of the same gender that have not been voted yet.
+ */
+app.get('/api/characters', (req, res, next) => {
+  const choices = ['Female', 'Male']
+  const randomGender = _.sample(choices)
+
+  Character.find({ random: { $near: [Math.random(), 0] } })
+    .where('voted', false)
+    .where('gender', randomGender)
+    .limit(2)
+    .exec((err, characters) => {
+      if (err)
+        return next(err)
+      if (characters.length === 2)
+        return res.send(characters)
+
+      const oppositeGender = _.first(_.without(choices, randomGender))
+
+      Character.find({ random: { $near: [Math.random(), 0] } })
+        .where('voted', false)
+        .where('gender', oppositeGender)
+        .limit(2)
+        .exec((err, characters) => {
+          if (err)
+            return next(err)
+          if (characters.length === 2)
+            return res.send(characters)
+
+          Character.update({}, { $set: { voted: false } }, { multi: true }, (err) => {
+            if (err)
+              return next(err)
+            res.send([])
+          })
+        })
+    })
+})
+
+/**
+ * GET /api/characters/search
+ * Looks up a character by name. (case-insensitive)
+ */
+app.get('/api/characters/search', (req, res, next) => {
+  const characterName = new RegExp(req.query.name, 'i')
+
+  Character.findOne({ name: 'characterName' }, (err, character) => {
+    if (err)
+      return next(err)
+    if (!character)
+      return res.status(404).send({ message: 'Character is lost and cannot be found' })
+
+    res.send(character)
+  })
+})
+
+/**
+ * GET /api/characters/top
+ * Return 100 highest ranked characters. Filter by gender, race and bloodline.
+ */
+app.get('/api/characters/top', (req, res, next) => {
+  const params = req.query
+  const conditions = {}
+
+  _.each(params, (value, key) => {
+    conditions[key] = new RegExp(`^${value}$`, 'i')
+  })
+
+  Character
+    .find(conditions)
+    .sort('-wins') // Sort so that wins always stay top
+    .exec((err, characters) => {
+      if (err)
+        return next(err)
+
+      // sort by winning percentage
+      characters.sort((a, b) => {
+        if (a.wins / (a.wins + a.losses) < b.wins / (b.wins + b.losses))
+          return 1
+        if (a.wins / (a.wins + a.losses) > b.wins / (b.wins + b.losses))
+          return -1
+        return 0
+      })
+
+      res.send(characters)
+    })
+})
+
+/**
+ * GET /api/characters/shame
+ * Returns 100 lowest ranked characters.
+ */
+app.get('/api/characters/shame', (req, res, next) => {
+  Character
+    .find()
+    .sort('-losses')
+    .limit(100)
+    .exec((err, characters) => {
+      if (err)
+        return next(err)
+      res.send(characters)
+    })
+})
+
+/**
+ * GET /api/characters/count
+ * Returns the total number of characters.
+ */
+app.get('/api/characters/count', (req, res, next) => {
+  Character.count({}, (err, count) => {
+    if (err)
+      return next(err)
+    res.send({ count })
+  })
+})
+
+/**
+ * GET /api/characters/:id
+ * Returns detailed character information.
+ */
+app.get('/api/characters/:id', (req, res, next) => {
+  const id = req.params.id
+
+  Character.findOne({ characterId: id }, (err, character) =>{
+    if (err)
+      return next(err)
+    if (!character)
+      return res.status(404).send({ message: 'Character is lost and cannot be found' })
+
+    res.send(character)
+  })
+})
+
+/**
+ * POST /api/report
+ * Reports a character. Character is removed after 4 reports.
+ */
+app.post('/api/report', (req, res, next) => {
+  const characterId = req.body.characterId
+
+  Character.findOne({ characterId }, (err, character) => {
+    if (err)
+      return next(err)
+    if (!character)
+      return res.status(404).send({ message: "Character can never be found" })
+
+    character.reports++
+
+    if (character.reports > 4) {
+      character.remove()
+      return res.send({ message: `${character.name} has been annihilated!!!` })
+    }
+
+    character.save((err) => {
+      if (err)
+        return next(err)
+      res.send({ message: `${character.name} has been reported; now pending annihilation.` })
+    })
+  })
+})
+
+/**
+ * GET /api/stats
+ * Returns characters statistics.
+ */
+app.get('/api/stats', (req, res, next) => {
+  async.parallel([
+    (cb) => {
+      Character.count({}, (err, count) => {
+        cb(err, count)
+      })
+    },
+    (cb) => {
+      Character.count({ race: 'Amarr' }, (err, amarrCount) => {
+        cb(err, amarrCount)
+      })
+    },
+    (cb) => {
+      Character.count({ race: 'Caldari' }, (err, caldariCount) => {
+        cb(err, caldariCount)
+      })
+    },
+    (cb) => {
+      Character.count({ race: 'Gallente' }, (err, gallenteCount) => {
+        cb(err, gallenteCount)
+      })
+    },
+    (cb) => {
+      Character.count({ race: 'Minmatar' }, (err, minmatarCount) => {
+        cb(err, minmatarCount)
+      })
+    },
+    (cb) => {
+      Character.count({ gender: 'Male' }, (err, maleCount) => {
+        cb(err, maleCount)
+      })
+    },
+    (cb) => {
+      Character.count({ gender: 'Female' }, (err, femaleCount) => {
+        cb(err, femaleCount)
+      })
+    },
+    (cb) => {
+      Character.aggregate({
+        $group: {
+          _id: null,
+          total: {
+            $sum: '$wins'
+          }
+        }
+      }, (err, totalVotes) => {
+        const total = totalVotes.length ? totalVotes[0].total : 0
+        cb(err, total)
+      })
+    },
+    (cb) => {
+      Character
+        .find()
+        .sort('-wins')
+        .limit(100)
+        .select('race')
+        .exec((err, characters) => {
+          if (err)
+            return next(err)
+
+          const raceCount = _.countBy(characters, (char) => char.race)
+          const max = _.max(raceCount, (race) => race)
+          const inverted = _.invert(raceCount)
+          const topRace = _.inverted(max)
+          const topCount = raceCount.topRace
+
+          cb(err, { race: topRace, count: topCount })
+        })
+    },
+    (cb) => {
+      Character
+        .find()
+        .sort('-wins')
+        .limit(100)
+        .select('bloodline')
+        .exec((err, characters) => {
+          if (err)
+            return next(err)
+
+          const bloodlineCount = _.countBy(characters, (char) => char.bloodline)
+          const max = _.max(bloodlineCount, (bloodline) => bloodline)
+          const inverted = _.invert(bloodlineCount)
+          const topBloodline = _.inverted(max)
+          const topCount = bloodlineCount.topBloodline
+
+          cb(err, { bloodline: topBloodline, count: topCount })
+        })
+    }
+  ], (err, results) => {
+    if (err)
+      return next(err)
+
+    res.send({
+      totalCount: results[0],
+      amarrCount: results[1],
+      caldariCount: results[2],
+      gallenteCount: results[3],
+      minmatarCount: results[4],
+      maleCount: results[5],
+      femaleCount: results[6],
+      totalVotes: results[7],
+      leadingRace: results[8],
+      leadingBloodline: results[9]
+    })
+  })
 })
 
 app.use((req, res) =>
